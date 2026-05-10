@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Dashboard – Smart Task Manager{% endblock %}
+{% block content %}
+<div class="container">
+
+  <!-- Analytics -->
+  <section class="analytics-section">
+    <h2 class="section-title">📊 Analytics Overview</h2>
+    <div class="analytics-grid">
+      <div class="stat-card stat-total">
+        <div class="stat-icon">📋</div>
+        <div class="stat-value" id="totalTasks">–</div>
+        <div class="stat-label">Total Tasks</div>
+      </div>
+      <div class="stat-card stat-completed">
+        <div class="stat-icon">✅</div>
+        <div class="stat-value" id="completedTasks">–</div>
+        <div class="stat-label">Completed</div>
+      </div>
+      <div class="stat-card stat-pending">
+        <div class="stat-icon">⏳</div>
+        <div class="stat-value" id="pendingTasks">–</div>
+        <div class="stat-label">Pending</div>
+      </div>
+      <div class="stat-card stat-progress">
+        <div class="stat-icon">🔄</div>
+        <div class="stat-value" id="inProgressTasks">–</div>
+        <div class="stat-label">In Progress</div>
+      </div>
+      <div class="stat-card stat-pct">
+        <div class="stat-icon">🎯</div>
+        <div class="stat-value" id="completionPct">–</div>
+        <div class="stat-label">Completion %</div>
+      </div>
+    </div>
+    <div class="priority-bars" id="priorityBars"></div>
+  </section>
+
+  <!-- WebSocket Status -->
+  <div class="ws-status">
+    <span class="ws-dot" id="wsDot"></span>
+    <span id="wsText">Connecting…</span>
+  </div>
+
+  <!-- Add Task -->
+  <section class="card">
+    <h2 class="section-title">➕ Add New Task</h2>
+    <div class="task-form">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Title *</label>
+          <input type="text" id="taskTitle" placeholder="Task title"/>
+        </div>
+        <div class="form-group">
+          <label>Priority</label>
+          <select id="taskPriority">
+            <option value="high">🔴 High</option>
+            <option value="medium" selected>🟡 Medium</option>
+            <option value="low">🟢 Low</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Status</label>
+          <select id="taskStatus">
+            <option value="pending">⏳ Pending</option>
+            <option value="in_progress">🔄 In Progress</option>
+            <option value="completed">✅ Completed</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <textarea id="taskDescription" rows="2" placeholder="Optional description…"></textarea>
+      </div>
+      <button class="btn btn-primary" onclick="addTask()">Add Task</button>
+    </div>
+  </section>
+
+  <!-- Task List -->
+  <section class="card">
+    <div class="task-list-header">
+      <h2 class="section-title">📝 My Tasks</h2>
+      <div class="filter-bar">
+        <select id="filterStatus" onchange="filterTasks()">
+          <option value="all">All Status</option>
+          <option value="pending">Pending</option>
+          <option value="in_progress">In Progress</option>
+          <option value="completed">Completed</option>
+        </select>
+        <select id="filterPriority" onchange="filterTasks()">
+          <option value="all">All Priority</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+      </div>
+    </div>
+    <div id="taskList" class="task-list">
+      <div class="loading">Loading tasks…</div>
+    </div>
+  </section>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal-overlay hidden" id="editModal">
+  <div class="modal">
+    <h3>✏️ Edit Task</h3>
+    <input type="hidden" id="editTaskId"/>
+    <div class="form-group">
+      <label>Title</label>
+      <input type="text" id="editTitle"/>
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <textarea id="editDescription" rows="3"></textarea>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Priority</label>
+        <select id="editPriority">
+          <option value="high">🔴 High</option>
+          <option value="medium">🟡 Medium</option>
+          <option value="low">🟢 Low</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Status</label>
+        <select id="editStatus">
+          <option value="pending">⏳ Pending</option>
+          <option value="in_progress">🔄 In Progress</option>
+          <option value="completed">✅ Completed</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="saveEdit()">Save Changes</button>
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Django WebSocket (native, no socket.io needed) ──────────
+const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+const ws = new WebSocket(`${wsProtocol}://${window.location.host}/ws/tasks/`);
+
+ws.onopen = () => {
+  document.getElementById('wsDot').classList.add('connected');
+  document.getElementById('wsText').textContent = 'Live updates connected';
+};
+
+ws.onclose = () => {
+  document.getElementById('wsDot').classList.remove('connected');
+  document.getElementById('wsText').textContent = 'Disconnected';
+};
+
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+  if (msg.type === 'task_added')   { showToast('✅ New task added: ' + msg.payload.title); loadTasks(); loadAnalytics(); }
+  if (msg.type === 'task_updated') { showToast('🔄 Task updated: '  + msg.payload.title); loadTasks(); loadAnalytics(); }
+  if (msg.type === 'task_deleted') { showToast('🗑️ Task deleted');                         loadTasks(); loadAnalytics(); }
+};
+
+// Load on start
+loadTasks();
+loadAnalytics();
+
+// CSRF token helper for fetch requests
+function getCsrfToken() {
+  return document.cookie.split(';')
+    .find(c => c.trim().startsWith('csrftoken='))
+    ?.split('=')[1] || '';
+}
+window.csrfToken = getCsrfToken;
+</script>
+{% endblock %}
